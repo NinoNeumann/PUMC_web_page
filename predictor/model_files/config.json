@@ -1,0 +1,93 @@
+{
+  "model_config": {
+    "model_type": "v1",
+    "weight_init": "random",
+    "num_blocks": 3,
+    "hidden_dim": 32,
+    "batch_norm": true,
+    "dropout": 0.3,
+    "output_bias": true
+  },
+  "data_config": {
+    "data_path": "/Users/ninoneumann/code_programm/PUMC_11_17/data/sheet1_new_train_data.xlsx",
+    "prediction_target": "survival",
+    "manual_numeric_features": [
+      "Hb",
+      "Cr",
+      "WBC",
+      "PLT",
+      "CRP",
+      "ESR",
+      "年龄",
+      "发病年龄"
+    ],
+    "manual_categorical_features": null,
+    "test_size": 0.1,
+    "val_size": 0.1,
+    "random_state": 42,
+    "check_numerical_stability": true,
+    "scaling_strategy": "standard",
+    "feature_cols": [
+      "性别Code",
+      "年龄",
+      "发病年龄",
+      "肺纤维化",
+      "肾功能",
+      "鼻痂溃疡",
+      "PLT",
+      "尿红细胞",
+      "CRP",
+      "肺",
+      "五因子评分",
+      "关节痛",
+      "ESR_category",
+      "ANA",
+      "新诊断疾病",
+      "Hb",
+      "是否使用传统DMARDs药物",
+      "Cr_category",
+      "WBC",
+      "有无并发肿瘤"
+    ],
+    "numeric_cols": [
+      "Hb",
+      "WBC",
+      "PLT",
+      "CRP",
+      "年龄",
+      "发病年龄"
+    ],
+    "categorical_cols": [
+      "性别Code",
+      "肺纤维化",
+      "肾功能",
+      "鼻痂溃疡",
+      "尿红细胞",
+      "肺",
+      "五因子评分",
+      "关节痛",
+      "ESR_category",
+      "ANA",
+      "新诊断疾病",
+      "是否使用传统DMARDs药物",
+      "Cr_category",
+      "有无并发肿瘤"
+    ]
+  },
+  "training": {
+    "train_config": {
+      "batch_size": 512,
+      "epochs": 500,
+      "learning_rate": 0.0005,
+      "patience": 500,
+      "gradient_clip": 8000.0
+    },
+    "bootstrap": {
+      "runs": 5,
+      "sample_ratio": 1.0,
+      "seed": 42,
+      "max_retry": 20
+    },
+    "no_bootstrap": true
+  }
+}
