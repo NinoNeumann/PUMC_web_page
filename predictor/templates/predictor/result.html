@@ -93,29 +93,35 @@
         <!-- 1. Model Output (Placed at Top) -->
         <div class="card mb-4">
             <div class="card-header card-header-result text-center">
-                {% if result.percentile > 75 %}
-                    <div class="high-risk-badge">High risk group</div>
-                {% elif result.percentile > 50 %}
-                    <div class="high-risk-badge" style="color: #fd7e14;">Intermediate risk group</div>
+                {% if result.error %}
+                    <div class="alert alert-warning mb-0">{{ result.error }}</div>
+                {% elif result.risk_band == 'high' %}
+                    <div class="high-risk-badge">{{ result.risk_group|default:"High Risk" }}</div>
+                {% elif result.risk_band == 'intermediate' %}
+                    <div class="high-risk-badge" style="color: #fd7e14;">{{ result.risk_group|default:"Intermediate Risk" }}</div>
+                {% elif result.risk_band == 'low' %}
+                    <div class="high-risk-badge" style="color: #28a745;">{{ result.risk_group|default:"Low Risk" }}</div>
                 {% else %}
-                    <div class="high-risk-badge" style="color: #28a745;">Low risk group</div>
+                    <div class="high-risk-badge" style="color: #6c757d;">Risk group unavailable</div>
                 {% endif %}
                 
+                {% if not result.error and result.percentile %}
                 <div class="risk-bar-container">
-                    <div class="risk-label" style="left: {{ result.percentile }}%;">Patient risk</div>
+                    <div class="risk-label" style="left: {{ result.percentile }}%;">lp (model)</div>
                     <div class="risk-bar">
                         <div class="risk-marker" style="left: {{ result.percentile }}%;"></div>
                     </div>
                     <div class="scale-markers">
-                        <span>0</span>
-                        <span>20</span>
-                        <span>40</span>
-                        <span>60</span>
-                        <span>80</span>
-                        <span>100</span>
+                        <span>Low</span>
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                        <span>High</span>
                     </div>
-                    <div class="text-center mt-2 text-muted">Percentile</div>
+                    <div class="text-center mt-2 text-muted small">Position maps linear predictor to the validation cohort min–max range (not a probability).</div>
                 </div>
+                {% endif %}
 
                 <div class="mt-4 px-4">
                     <table class="table table-bordered text-center survival-table">

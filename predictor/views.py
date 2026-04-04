@@ -1,59 +1,107 @@
+import json
 import math
+import os
+
+from django.conf import settings
 from django.shortcuts import render
 from django.http import JsonResponse
+
 from .utils.model_loader import ModelService
+
+_CUTOFFS_CACHE = None
+
+
+def _load_lp_risk_cutoffs():
+    """lp 分组阈值：与 DeepLearning_Risk_Groups.csv 中三分位结果一致。"""
+    global _CUTOFFS_CACHE
+    if _CUTOFFS_CACHE is not None:
+        return _CUTOFFS_CACHE
+    path = os.path.join(
+        settings.BASE_DIR, 'predictor', 'model_files', 'risk_group_cutoffs.json'
+    )
+    if not os.path.isfile(path):
+        _CUTOFFS_CACHE = {
+            'lp_low_max': -2.343692,
+            'lp_mid_max': -0.34264246,
+            'lp_display_min': -3.0107012,
+            'lp_display_max': 1.2592012,
+        }
+        return _CUTOFFS_CACHE
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    _CUTOFFS_CACHE = {
+        'lp_low_max': float(data['lp_low_max']),
+        'lp_mid_max': float(data['lp_mid_max']),
+        'lp_display_min': float(data['lp_display_min']),
+        'lp_display_max': float(data['lp_display_max']),
+    }
+    return _CUTOFFS_CACHE
+
+
+def _classify_lp_risk_group(lp, cutoffs):
+    """
+    与 CSV 规则一致：
+    Low: lp <= lp_low_max；Intermediate: lp_low_max < lp <= lp_mid_max；High: lp > lp_mid_max
+    """
+    t1, t2 = cutoffs['lp_low_max'], cutoffs['lp_mid_max']
+    if lp <= t1:
+        return 'Low Risk', 'low'
+    if lp <= t2:
+        return 'Intermediate Risk', 'intermediate'
+    return 'High Risk', 'high'
+
+
+def _lp_to_bar_percent(lp, cutoffs):
+    lo, hi = cutoffs['lp_display_min'], cutoffs['lp_display_max']
+    span = hi - lo
+    if span <= 0:
+        return 50.0
+    pct = (lp - lo) / span * 100.0
+    return min(max(pct, 1.0), 99.0)
 
 # Manual fallback options for fields that might be numeric in source but treated as categorical
 FALLBACK_OPTIONS = {
-    '性别Code': [0, 1],
-    '五因子评分': [0, 1, 2, 3, 4, 5],
-    '是否使用传统DMARDs药物': [0, 1],
-    '肺纤维化': [0, 1],
-    '肾功能': [0, 1],
-    '鼻痂溃疡': [0, 1],
-    '尿红细胞': [0, 1],
-    '肺': [0, 1],
-    '关节痛': [0, 1],
-    'ANA': [0, 1],
-    '新诊断疾病': [0, 1],
-    '有无并发肿瘤': [0, 1],
-    # Guessing binary for others. If ESR/Cr category are codes 0/1/2..
-    'ESR_category': [0, 1, 2, 3], 
-    'Cr_category': [0, 1, 2, 3]
+    'Gender': [0, 1],
+    'Antibody': [0, 1],
+    'Coronary_Heart_Disease': [0, 1],
+    'interstitial_lung_disease': [0, 1],
+    'Hematuria': [0, 1],
+    'Musculoskeletal_Involvement': [0, 1],
+    'Pulmonary_Involvement': [0, 1],
+    'Cr_category': [0, 1, 2, 3],
+    'ESR_category': [0, 1, 2, 3],
+    'PLT_category': [0, 1, 2, 3],
+    'Smoking_History': [0, 1]
 }
 
 DEFAULT_VALUES = {
-    '年龄': 55,
-    '发病年龄': 50,
+    'Age': 55,
+    'Onset_Age': 50,
     'Hb': 130,
     'WBC': 6.5,
-    'PLT': 220,
+    'ALT': 25,
     'CRP': 5.0,
-    '性别Code': 0,
-    '五因子评分': 0,
-    '是否使用传统DMARDs药物': 0,
-    '肺纤维化': 0,
-    '肾功能': 0,
-    '鼻痂溃疡': 0,
-    '尿红细胞': 0,
-    '肺': 0,
-    '关节痛': 0,
-    'ANA': 0,
-    '新诊断疾病': 0,
-    '有无并发肿瘤': 0,
+    'Gender': 0,
+    'Antibody': 0,
+    'Coronary_Heart_Disease': 0,
+    'interstitial_lung_disease': 0,
+    'Hematuria': 0,
+    'Musculoskeletal_Involvement': 0,
+    'Pulmonary_Involvement': 0,
+    'Cr_category': 0,
     'ESR_category': 0,
-    'Cr_category': 0
+    'PLT_category': 0,
+    'Smoking_History': 0
 }
 
 # Configuration for slider fields
 SLIDER_CONFIG = {
-    '年龄': {'min': 18, 'max': 90, 'step': 1},
-    '发病年龄': {'min': 18, 'max': 90, 'step': 1},
+    'Age': {'min': 18, 'max': 90, 'step': 1},
+    'Onset_Age': {'min': 18, 'max': 90, 'step': 1},
     'Hb': {'min': 40, 'max': 180, 'step': 1},
     'WBC': {'min': 0, 'max': 100, 'step': 0.1},
-    'PLT': {'min': 0, 'max': 1000, 'step': 1},
+    'ALT': {'min': 0, 'max': 500, 'step': 1},
     'CRP': {'min': 0, 'max': 200, 'step': 0.1},
-    '五因子评分': {'min': 0, 'max': 5, 'step': 1},
 }
 
 def index(request):
@@ -163,32 +211,28 @@ def predict(request):
                 
         result = service.predict(input_data)
         
-        # Calculate percentile if risk score is available
+        # risk_score 与 R 输出中的 lp（linear predictor）一致；分组与 DeepLearning_Risk_Groups.csv 相同
         if 'risk_score' in result:
             try:
-                # Assuming risk score is log-hazard ratio, roughly normally distributed centered at 0
-                # Map to percentile (0-100)
-                z_score = result['risk_score']
-                # Using a scaling factor? If the training data std dev was 1, then this is fine.
-                # If we don't know, we assume standard normal for the "Risk Score" interpretation.
-                percentile = 0.5 * (1 + math.erf(z_score / math.sqrt(2))) * 100
-                result['percentile'] = min(max(percentile, 1), 99) # Clamp between 1 and 99
-                
-                # Mock survival probabilities if not provided by model
-                # This is a placeholder since we can't calculate true survival without baseline hazard
-                # Using a logistic function to mock survival decrease with risk
+                lp = float(result['risk_score'])
+                result['lp'] = lp
+                cutoffs = _load_lp_risk_cutoffs()
+                label, band = _classify_lp_risk_group(lp, cutoffs)
+                result['risk_group'] = label
+                result['risk_band'] = band
+                result['percentile'] = _lp_to_bar_percent(lp, cutoffs)
+
                 base_survival_1yr = 0.90
                 base_survival_2yr = 0.85
-                
-                # Higher risk score -> Lower survival
-                # survival = base ^ exp(risk_score)
-                hazard_ratio = math.exp(z_score)
+                hazard_ratio = math.exp(lp)
                 result['survival_1yr'] = round(base_survival_1yr ** hazard_ratio * 100, 1)
                 result['survival_2yr'] = round(base_survival_2yr ** hazard_ratio * 100, 1)
-                
+
             except Exception as e:
-                print(f"Error calculating percentile: {e}")
+                print(f"Error deriving risk group from lp: {e}")
                 result['percentile'] = 50
+                result['risk_group'] = 'Intermediate Risk'
+                result['risk_band'] = 'intermediate'
 
         return render(request, 'predictor/result.html', {'result': result, 'inputs': input_data})
         

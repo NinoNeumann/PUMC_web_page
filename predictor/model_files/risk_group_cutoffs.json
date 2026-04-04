@@ -1,0 +1,7 @@
+{
+  "description": "lp thresholds from test-set tertiles in DeepLearning_Risk_Groups.csv (PUMC_11_17/R/data/3_20_draw/test/risk_group/)",
+  "lp_low_max": -2.343692,
+  "lp_mid_max": -0.34264246,
+  "lp_display_min": -3.0107012,
+  "lp_display_max": 1.2592012
+}

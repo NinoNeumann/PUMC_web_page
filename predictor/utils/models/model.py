@@ -330,6 +330,119 @@ def create_attention_model(in_features, num_blocks=2, hidden_dim=16, out_feature
     return net
 
 
+# ========== v3: CrossAttentionCox (与 PUMC_11_17/train/models/model.py 对齐，用于加载 v3 权重) ==========
+class FeatureTokenizer(nn.Module):
+    """将 (batch, num_features) 转为 (batch, num_features, embed_dim)，供 v3 Transformer 分支使用。"""
+
+    def __init__(self, num_features, embed_dim):
+        super().__init__()
+        self.num_features = num_features
+        self.embed_dim = embed_dim
+        self.weights = nn.Parameter(torch.randn(1, num_features, embed_dim))
+        self.biases = nn.Parameter(torch.zeros(1, num_features, embed_dim))
+        nn.init.xavier_uniform_(self.weights)
+
+    def forward(self, x):
+        x_expanded = x.unsqueeze(-1)
+        return x_expanded * self.weights + self.biases
+
+
+class CrossNet(nn.Module):
+    """Deep Cross Network：x_{l+1} = x_0 * (W_l^T x_l + b_l) + x_l"""
+
+    def __init__(self, in_features, num_layers=2):
+        super().__init__()
+        self.num_layers = num_layers
+        self.kernels = nn.ParameterList([
+            nn.Parameter(torch.randn(in_features, 1)) for _ in range(num_layers)
+        ])
+        self.biases = nn.ParameterList([
+            nn.Parameter(torch.zeros(in_features, 1)) for _ in range(num_layers)
+        ])
+        for p in self.kernels:
+            nn.init.xavier_normal_(p)
+
+    def forward(self, x):
+        x_0 = x.unsqueeze(2)
+        x_l = x_0
+        for i in range(self.num_layers):
+            xl_w = torch.matmul(x_l.transpose(1, 2), self.kernels[i])
+            dot_ = torch.matmul(x_0, xl_w)
+            x_l = dot_ + self.biases[i] + x_l
+        return x_l.squeeze(2)
+
+
+class GatingMechanism(nn.Module):
+    def __init__(self, in_features):
+        super().__init__()
+        self.gate = nn.Linear(in_features, in_features)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        return x * self.sigmoid(self.gate(x))
+
+
+class CrossAttentionCox(nn.Module):
+    """Transformer 分支 + CrossNet 分支 + 融合 MLP（与训练脚本 v3 一致）。"""
+
+    def __init__(self, in_features, num_blocks=2, hidden_dim=32, out_features=1,
+                 dropout=0.1, batch_norm=False, output_bias=True, num_heads=4,
+                 num_cross_layers=2):
+        super().__init__()
+        self.gating = GatingMechanism(in_features)
+        self.tokenizer = FeatureTokenizer(in_features, hidden_dim)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            dim_feedforward=hidden_dim * 2,
+            dropout=dropout,
+            batch_first=True,
+            activation='gelu'
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_blocks)
+        self.trans_flatten_dim = in_features * hidden_dim
+        self.trans_norm = nn.LayerNorm(self.trans_flatten_dim)
+        self.cross_net = CrossNet(in_features, num_layers=num_cross_layers)
+        fusion_dim = self.trans_flatten_dim + in_features
+        self.head = nn.Sequential(
+            nn.Linear(fusion_dim, hidden_dim * 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, out_features, bias=output_bias)
+        )
+
+    def forward(self, x):
+        x_g = self.gating(x)
+        x_emb = self.tokenizer(x_g)
+        x_trans = self.transformer(x_emb)
+        x_trans_flat = x_trans.reshape(x_trans.size(0), -1)
+        x_trans_out = self.trans_norm(x_trans_flat)
+        x_cross_out = self.cross_net(x_g)
+        x_combined = torch.cat([x_trans_out, x_cross_out], dim=1)
+        return self.head(x_combined)
+
+
+def create_cross_attention_model(in_features, num_blocks=2, hidden_dim=32, out_features=1,
+                                 dropout=0.1, batch_norm=False, output_bias=False, num_cross_layers=2):
+    num_heads = 4
+    if hidden_dim % num_heads != 0:
+        hidden_dim = (hidden_dim // num_heads + 1) * num_heads
+    return CrossAttentionCox(
+        in_features=in_features,
+        num_blocks=num_blocks,
+        hidden_dim=hidden_dim,
+        out_features=out_features,
+        dropout=dropout,
+        batch_norm=batch_norm,
+        output_bias=output_bias,
+        num_heads=num_heads,
+        num_cross_layers=num_cross_layers
+    )
+
+
 # ========== 模型配置类 ==========
 class ModelConfig:
     """
@@ -339,6 +452,7 @@ class ModelConfig:
     - 'v0' 或 'mlp': MLPVanilla (标准MLP)
     - 'v1' 或 'resnet': ResNetStyle (带残差连接)
     - 'v2' 或 'attention': AttentionNetwork (带自注意力机制)
+    - 'v3' 或 'cross_attention': CrossAttentionCox (Transformer + DCN + Gating)
     """
     
     def __init__(self, model_type='v0', **kwargs):
@@ -376,8 +490,13 @@ class ModelConfig:
             self.model_type = 'v1'
         elif model_type in ['v2', 'attention']:
             self.model_type = 'v2'
+        elif model_type in ['v3', 'cross_attention']:
+            self.model_type = 'v3'
         else:
-            raise ValueError(f"不支持的模型类型: {model_type}。支持的类型: 'v0', 'v1', 'v2', 'mlp', 'resnet', 'attention'")
+            raise ValueError(
+                f"不支持的模型类型: {model_type}。支持的类型: "
+                f"'v0', 'v1', 'v2', 'v3', 'mlp', 'resnet', 'attention', 'cross_attention'"
+            )
         
         # 根据模型类型设置默认参数
         if self.model_type == 'v0':
@@ -397,6 +516,13 @@ class ModelConfig:
             self.batch_norm = kwargs.get('batch_norm', False)
             self.dropout = kwargs.get('dropout', 0.3)
             self.output_bias = kwargs.get('output_bias', False)
+        elif self.model_type == 'v3':
+            self.num_blocks = kwargs.get('num_blocks', 2)
+            self.hidden_dim = kwargs.get('hidden_dim', 32)
+            self.batch_norm = kwargs.get('batch_norm', False)
+            self.dropout = kwargs.get('dropout', 0.1)
+            self.output_bias = kwargs.get('output_bias', False)
+            self.num_cross_layers = kwargs.get('num_cross_layers', 2)
 
         self.weight_init = kwargs.get('weight_init', 'default')
 
@@ -462,6 +588,17 @@ class ModelConfig:
                 dropout=self.dropout,
                 batch_norm=self.batch_norm,
                 output_bias=self.output_bias
+            )
+        elif self.model_type == 'v3':
+            net = create_cross_attention_model(
+                in_features=in_features,
+                num_blocks=self.num_blocks,
+                hidden_dim=self.hidden_dim,
+                out_features=out_features,
+                dropout=self.dropout,
+                batch_norm=self.batch_norm,
+                output_bias=self.output_bias,
+                num_cross_layers=self.num_cross_layers
             )
         else:
             raise ValueError(f"未知的模型类型: {self.model_type}")
@@ -537,6 +674,12 @@ class ModelConfig:
         elif self.model_type == 'v2':
             return (f"ModelConfig(model_type='{self.model_type}', "
                     f"num_blocks={self.num_blocks}, hidden_dim={self.hidden_dim}, "
+                    f"batch_norm={self.batch_norm}, dropout={self.dropout}, "
+                    f"output_bias={self.output_bias}, weight_init='{self.weight_init}')")
+        elif self.model_type == 'v3':
+            return (f"ModelConfig(model_type='{self.model_type}', "
+                    f"num_blocks={self.num_blocks}, hidden_dim={self.hidden_dim}, "
+                    f"num_cross_layers={self.num_cross_layers}, "
                     f"batch_norm={self.batch_norm}, dropout={self.dropout}, "
                     f"output_bias={self.output_bias}, weight_init='{self.weight_init}')")
 
