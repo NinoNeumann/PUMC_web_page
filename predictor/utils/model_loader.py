@@ -12,7 +12,8 @@ if not hasattr(scipy.integrate, 'simps'):
 
 from .models import ModelConfig
 # Adjust import if needed based on actual structure
-from .data import DataConfig 
+from .data import DataConfig
+from .survival_grid import survival_at_days
 
 class ModelService:
     _instance = None
@@ -33,7 +34,8 @@ class ModelService:
         self.categorical_cols = None
         self.model_type = None
         self.prediction_target = None
-        
+        self._baseline_ok = False
+
         self.load_artifacts()
 
     def load_artifacts(self):
@@ -104,8 +106,38 @@ class ModelService:
         model_path = os.path.join(model_dir, model_filename)
         if os.path.exists(model_path):
             self.model.load_model_weights(model_path)
+            self._baseline_ok = self._try_load_baseline_hazards(model_path, model_dir)
         else:
             print(f"Model weights not found at {model_path}")
+
+    def _try_load_baseline_hazards(self, model_path, model_dir):
+        """
+        与 pycox CoxPH.load_net 一致：读取 baseline_hazards_ Series，并设置 cumulative。
+        文件名约定：coxph_model.pkl -> coxph_model_blh.pickle
+        """
+        base, _ = os.path.splitext(model_path)
+        candidates = [
+            base + '_blh.pickle',
+            os.path.join(model_dir, 'baseline_hazards.pickle'),
+        ]
+        for blh_path in candidates:
+            if not os.path.isfile(blh_path):
+                continue
+            try:
+                bh = pd.read_pickle(blh_path)
+                self.model.baseline_hazards_ = bh
+                self.model.baseline_cumulative_hazards_ = bh.cumsum().rename(
+                    'baseline_cumulative_hazards'
+                )
+                print(f"Loaded Cox baseline hazards from {blh_path}")
+                return True
+            except Exception as e:
+                print(f"Failed to load baseline hazards from {blh_path}: {e}")
+        print(
+            "Cox baseline hazards not found (expected e.g. coxph_model_blh.pickle next to weights). "
+            "Web survival probabilities will be unavailable until you copy it from training output."
+        )
+        return False
 
     def preprocess(self, input_data):
         """
@@ -151,33 +183,24 @@ class ModelService:
             x = self.preprocess(input_data)
             
             if self.prediction_target == 'survival':
-                 # Compute baseline hazards if not already (might be saved in model weights? 
-                 # No, PyCox/torchtuples usually needs training data for baseline hazards 
-                 # if not explicitly saved. train.py calls compute_baseline_hazards(x_train, y_train).
-                 # This is a PROBLEM if we don't have training data during inference.
-                 # Check if the saved model weights include baseline hazards.
-                 # CoxPH model in pycox stores baseline hazards in self.duration_index and self.cum_baseline_hazard
-                 # IF they were computed. But `load_model_weights` only loads pytorch state dict usually.
-                 # We might need to save/load baseline hazards separately or check if torchtuples saves them.
-                 pass
-            
-            # For now, let's try to predict. If it's survival, we want survival probabilities.
-            # If baseline hazards are missing, predict_surv_df will fail.
-            # Alternatives: Predict risk score (hazard ratio) using model.predict(x)
-            
-            if self.prediction_target == 'survival':
-                # Return risk score (log-hazard)
                 risk = self.model.predict(x)
-                # Convert to Python list/float
-                return {"risk_score": float(risk[0][0])}
-                
-                # If we want survival curves, we definitely need baseline hazards.
-                # The train.py script calculates them using training data.
-                # Since we don't have training data here, we can't easily recompute them.
-                # We should have saved the baseline hazards or the survival function object.
-                # But looking at train.py, it only saves model weights and survival PREDICTIONS for test set.
-                # It doesn't seem to serialize the baseline hazards specifically.
-                
+                lp = float(risk[0][0])
+                out = {"risk_score": lp}
+                if not self._baseline_ok:
+                    out["survival_unavailable_reason"] = (
+                        "缺少基线风险文件：请将训练生成的 coxph_model_blh.pickle 与 coxph_model.pkl "
+                        "放在 predictor/model_files/ 目录。"
+                    )
+                    return out
+                surv_df = self.model.predict_surv_df(x)
+                by_day = survival_at_days(surv_df, duration=None, days=(365, 730))
+                s365, s730 = by_day.get(365), by_day.get(730)
+                if s365 is not None:
+                    out["survival_1yr"] = round(s365 * 100.0, 1)
+                if s730 is not None:
+                    out["survival_2yr"] = round(s730 * 100.0, 1)
+                return out
+
             elif self.prediction_target == 'event_only':
                 logits = self.model.predict(x)
                 prob = torch.sigmoid(torch.tensor(logits)).item()

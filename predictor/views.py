@@ -1,5 +1,4 @@
 import json
-import math
 import os
 
 from django.conf import settings
@@ -224,12 +223,7 @@ def index(request):
                 result['risk_group'] = label
                 result['risk_band'] = band
                 result['percentile'] = _lp_to_bar_percent(lp, cutoffs)
-
-                base_survival_1yr = 0.90
-                base_survival_2yr = 0.85
-                hazard_ratio = math.exp(lp)
-                result['survival_1yr'] = round(base_survival_1yr ** hazard_ratio * 100, 1)
-                result['survival_2yr'] = round(base_survival_2yr ** hazard_ratio * 100, 1)
+                # survival_1yr / survival_2yr：由 ModelService 用 pycox predict_surv_df + 训练同款网格计算
 
             except Exception as e:
                 print(f"Error deriving risk group from lp: {e}")

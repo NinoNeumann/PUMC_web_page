@@ -219,7 +219,11 @@
                                         </tr>
                                     </tbody>
                                 </table>
-                                <p class="text-muted small fst-italic mb-0">Estimates are illustrative (risk score vs fixed baseline), not validated individual survival.</p>
+                                {% if result.survival_unavailable_reason %}
+                                <p class="text-warning small mb-0">{{ result.survival_unavailable_reason }}</p>
+                                {% else %}
+                                <p class="text-muted small fst-italic mb-0">1y/2y survival uses the same Breslow baseline and time grid as the training export (pycox CoxPH).</p>
+                                {% endif %}
 
                                 <details class="mt-3">
                                     <summary class="small text-secondary" style="cursor:pointer;">Technical details</summary>
