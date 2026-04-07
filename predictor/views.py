@@ -4,7 +4,7 @@ import os
 
 from django.conf import settings
 from django.shortcuts import render
-from django.http import JsonResponse
+from django.views.decorators.http import require_http_methods
 
 from .utils.model_loader import ModelService
 
@@ -59,7 +59,7 @@ def _lp_to_bar_percent(lp, cutoffs):
     pct = (lp - lo) / span * 100.0
     return min(max(pct, 1.0), 99.0)
 
-# Manual fallback options for fields that might be numeric in source but treated as categorical
+
 FALLBACK_OPTIONS = {
     'Gender': [0, 1],
     'Antibody': [0, 1],
@@ -94,7 +94,6 @@ DEFAULT_VALUES = {
     'Smoking_History': 0
 }
 
-# Configuration for slider fields
 SLIDER_CONFIG = {
     'Age': {'min': 18, 'max': 90, 'step': 1},
     'Onset_Age': {'min': 18, 'max': 90, 'step': 1},
@@ -104,28 +103,36 @@ SLIDER_CONFIG = {
     'CRP': {'min': 0, 'max': 200, 'step': 0.1},
 }
 
-def index(request):
-    service = ModelService.get_instance()
-    
-    if not service.config:
-        return render(request, 'predictor/index.html', {
-            'error': 'Model not loaded or config file missing.'
-        })
 
-    # Prepare fields for the form
-    # We differentiate between numeric and categorical to render appropriate inputs
+def _align_categorical_value(value, options):
+    if not options:
+        return value
+    for o in options:
+        if str(o) == str(value):
+            return o
+    return value
+
+
+def _build_form_fields(service, post=None):
+    """post: QueryDict from request.POST to repopulate after submit; None for defaults."""
     fields = []
-    
-    # Numeric fields
+    post = post or {}
+
     for col in service.numeric_cols:
-        default_val = DEFAULT_VALUES.get(col, 0)
-        
+        raw = post.get(col)
+        if raw is not None and str(raw).strip() != '':
+            try:
+                default_val = float(raw)
+            except ValueError:
+                default_val = DEFAULT_VALUES.get(col, 0)
+        else:
+            default_val = DEFAULT_VALUES.get(col, 0)
+
         field_config = {
             'name': col,
             'label': col,
             'value': default_val
         }
-
         if col in SLIDER_CONFIG:
             field_config.update({
                 'type': 'range',
@@ -138,32 +145,24 @@ def index(request):
                 'type': 'number',
                 'step': 'any'
             })
-            
         fields.append(field_config)
-        
-    # Categorical fields - we need options if possible
-    # The encoders have classes_. 
+
     for col in service.categorical_cols:
         options = []
-        is_fallback = False
-        
         if service.encoders and col in service.encoders:
             options = list(service.encoders[col].classes_)
         elif col in FALLBACK_OPTIONS:
-             options = FALLBACK_OPTIONS[col]
-             is_fallback = True
-        
-        # If still no options, maybe fallback to number input or text input?
+            options = FALLBACK_OPTIONS[col]
+
         field_type = 'select' if options else 'text'
-        if not options:
-            # Try to see if default value is a number, use number input
-            if isinstance(DEFAULT_VALUES.get(col), (int, float)):
-                 field_type = 'number'
-        
-        default_val = DEFAULT_VALUES.get(col, "")
-        if options and default_val not in options and len(options) > 0:
-             # default_val = options[0] # Don't force override if not in list, let template handle select
-             pass
+        if not options and isinstance(DEFAULT_VALUES.get(col), (int, float)):
+            field_type = 'number'
+
+        raw = post.get(col)
+        if raw is not None and str(raw).strip() != '':
+            default_val = _align_categorical_value(raw, options)
+        else:
+            default_val = _align_categorical_value(DEFAULT_VALUES.get(col, ""), options)
 
         fields.append({
             'name': col,
@@ -172,33 +171,38 @@ def index(request):
             'options': options,
             'value': default_val
         })
-        
-    return render(request, 'predictor/index.html', {'fields': fields})
 
-def predict(request):
+    return fields
+
+
+@require_http_methods(['GET', 'POST'])
+def index(request):
+    service = ModelService.get_instance()
+
+    if not service.config:
+        return render(request, 'predictor/index.html', {
+            'error': 'Model not loaded or config file missing.',
+            'fields': [],
+        })
+
     if request.method == 'POST':
-        service = ModelService.get_instance()
-        
-        if not service.config or service.numeric_cols is None:
-             return render(request, 'predictor/index.html', {
-                'error': 'Model not loaded. Please ensure model files are placed in predictor/model_files/.'
+        if service.numeric_cols is None:
+            return render(request, 'predictor/index.html', {
+                'error': 'Model not loaded. Please ensure model files are placed in predictor/model_files/.',
+                'fields': _build_form_fields(service, request.POST),
             })
-        
-        # Collect data from POST
+
         input_data = {}
-        
         for col in service.numeric_cols:
             val = request.POST.get(col)
             if val:
                 input_data[col] = float(val)
             else:
-                 input_data[col] = 0.0 # Default?
-                 
+                input_data[col] = 0.0
+
         for col in service.categorical_cols:
             val = request.POST.get(col)
             if val:
-                # If encoder exists, we might need original value (str/int)
-                # If fallback (numeric options), convert to int/float if possible
                 if col in FALLBACK_OPTIONS:
                     try:
                         input_data[col] = int(val)
@@ -207,11 +211,10 @@ def predict(request):
                 else:
                     input_data[col] = val
             else:
-                input_data[col] = 0 # Default fallback
-                
+                input_data[col] = 0
+
         result = service.predict(input_data)
-        
-        # risk_score 与 R 输出中的 lp（linear predictor）一致；分组与 DeepLearning_Risk_Groups.csv 相同
+
         if 'risk_score' in result:
             try:
                 lp = float(result['risk_score'])
@@ -234,6 +237,12 @@ def predict(request):
                 result['risk_group'] = 'Intermediate Risk'
                 result['risk_band'] = 'intermediate'
 
-        return render(request, 'predictor/result.html', {'result': result, 'inputs': input_data})
-        
-    return JsonResponse({'error': 'Method not allowed'}, status=405)
+        return render(request, 'predictor/index.html', {
+            'fields': _build_form_fields(service, request.POST),
+            'result': result,
+            'inputs': input_data,
+        })
+
+    return render(request, 'predictor/index.html', {
+        'fields': _build_form_fields(service, None),
+    })

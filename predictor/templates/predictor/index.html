@@ -1,101 +1,255 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Survival Model Prediction</title>
-    <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
-            background-color: #f8f9fa;
+            background-color: #e9ecef;
+            min-height: 100vh;
         }
-        .container {
-            max-width: 900px;
+        .app-page {
+            max-width: 1400px;
         }
-        .card {
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        .panel-card {
             border: none;
-            border-radius: 12px;
+            border-radius: 14px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            overflow: hidden;
         }
-        .card-header {
-            background-color: #0d6efd;
-            color: white;
-            border-radius: 12px 12px 0 0 !important;
-            padding: 1.5rem;
+        .panel-header {
+            background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+            color: #fff;
+            padding: 1rem 1.25rem;
+            font-weight: 600;
+            text-align: center;
         }
-        .btn-primary {
-            padding: 0.8rem 2rem;
-            font-size: 1.1rem;
-            border-radius: 8px;
+        .left-scroll {
+            max-height: calc(100vh - 8rem);
+            overflow-y: auto;
         }
         .form-label {
             font-weight: 500;
             color: #495057;
+            font-size: 0.8rem;
+        }
+        .risk-bar-container {
+            position: relative;
+            height: 56px;
+            margin: 32px 0 16px 0;
+            width: 100%;
+        }
+        .risk-bar {
+            height: 26px;
+            width: 100%;
+            background: linear-gradient(to right, #28a745 0%, #ffc107 35%, #fd7e14 70%, #dc3545 100%);
+            border-radius: 13px;
+            position: relative;
+        }
+        .risk-marker {
+            position: absolute;
+            top: -8px;
+            width: 4px;
+            height: 42px;
+            background-color: #212529;
+            border: 2px solid #fff;
+            z-index: 10;
+            transform: translateX(-50%);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+        }
+        .risk-label {
+            position: absolute;
+            top: -22px;
+            transform: translateX(-50%);
+            font-weight: 600;
+            font-size: 0.8rem;
+            white-space: nowrap;
+        }
+        .scale-markers {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 4px;
+            font-size: 0.75rem;
+            color: #6c757d;
+        }
+        .high-risk-badge {
+            background-color: #e9ecef;
+            color: #dc3545;
+            padding: 6px 16px;
+            border-radius: 6px;
+            font-weight: 700;
+            display: inline-block;
+            margin-bottom: 8px;
+        }
+        .km-section-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #212529;
+            border-bottom: 2px solid #0d6efd;
+            padding-bottom: 0.5rem;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+        .km-wrap {
+            background: #fff;
+            border-radius: 10px;
+            padding: 0.5rem;
+            border: 1px solid #dee2e6;
+        }
+        .km-wrap img {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+        .survival-table th {
+            background-color: #f8f9fa;
+            font-size: 0.85rem;
+        }
+        .placeholder-hint {
+            color: #6c757d;
+            font-size: 0.95rem;
+            padding: 2rem 1rem;
+            text-align: center;
         }
     </style>
 </head>
 <body>
-    <div class="container py-5">
-        <div class="card">
-            <div class="card-header text-center">
-                <h2 class="mb-0">Patient Survival Prediction Model</h2>
-                <p class="mb-0 mt-2 opacity-75">Enter patient data below to estimate risk</p>
-            </div>
-            
-            <div class="card-body p-4">
-                {% if error %}
-                    <div class="alert alert-danger d-flex align-items-center" role="alert">
-                        <svg class="bi flex-shrink-0 me-2" width="24" height="24" role="img" aria-label="Danger:"><use xlink:href="#exclamation-triangle-fill"/></svg>
-                        <div>{{ error }}</div>
-                    </div>
-                {% endif %}
-                
-                <form action="{% url 'predict' %}" method="post">
-                    {% csrf_token %}
-                    
-                    <h4 class="mb-4 text-primary border-bottom pb-2">Patient Characteristics</h4>
-                    
-                    <div class="row g-3">
-                        {% for field in fields %}
-                            <div class="col-md-4 col-sm-6">
-                                <label for="{{ field.name }}" class="form-label small text-uppercase">{{ field.label }}</label>
-                                
-                                {% if field.type == 'select' %}
-                                    <select class="form-select" name="{{ field.name }}" id="{{ field.name }}">
-                                        {% for opt in field.options %}
-                                            <option value="{{ opt }}" {% if opt == field.value %}selected{% endif %}>{{ opt }}</option>
-                                        {% endfor %}
-                                    </select>
-                                {% elif field.type == 'range' %}
-                                    <div class="d-flex align-items-center">
-                                        <input type="range" class="form-range flex-grow-1 me-2" name="{{ field.name }}" id="{{ field.name }}" 
-                                               min="{{ field.min }}" max="{{ field.max }}" step="{{ field.step }}" value="{{ field.value }}"
-                                               oninput="document.getElementById('val_{{ field.name }}').textContent = this.value">
-                                        <span class="badge bg-primary" id="val_{{ field.name }}" style="min-width: 40px;">{{ field.value }}</span>
+    <div class="container-fluid app-page py-4 px-3">
+        <div class="row g-4 align-items-stretch">
+            <!-- Left: parameters -->
+            <div class="col-lg-5">
+                <div class="card panel-card h-100">
+                    <div class="panel-header">Patient characteristics</div>
+                    <div class="card-body left-scroll">
+                        {% if error %}
+                            <div class="alert alert-danger" role="alert">{{ error }}</div>
+                        {% endif %}
+                        <form action="{% url 'index' %}" method="post">
+                            {% csrf_token %}
+                            <div class="row g-3">
+                                {% for field in fields %}
+                                    <div class="col-md-6">
+                                        <label for="{{ field.name }}" class="form-label text-uppercase">{{ field.label }}</label>
+                                        {% if field.type == 'select' %}
+                                            <select class="form-select form-select-sm" name="{{ field.name }}" id="{{ field.name }}">
+                                                {% for opt in field.options %}
+                                                    <option value="{{ opt }}" {% if opt == field.value %}selected{% endif %}>{{ opt }}</option>
+                                                {% endfor %}
+                                            </select>
+                                        {% elif field.type == 'range' %}
+                                            <div class="d-flex align-items-center gap-2">
+                                                <input type="range" class="form-range flex-grow-1" name="{{ field.name }}" id="{{ field.name }}"
+                                                       min="{{ field.min }}" max="{{ field.max }}" step="{{ field.step }}" value="{{ field.value }}"
+                                                       oninput="document.getElementById('val_{{ field.name }}').textContent = this.value">
+                                                <span class="badge bg-primary" id="val_{{ field.name }}" style="min-width: 44px;">{{ field.value }}</span>
+                                            </div>
+                                        {% else %}
+                                            <input type="{{ field.type }}" class="form-control form-control-sm" name="{{ field.name }}" id="{{ field.name }}" step="{{ field.step }}" value="{{ field.value }}" {% if field.type == 'number' %}required{% endif %}>
+                                        {% endif %}
                                     </div>
-                                {% else %}
-                                    <input type="{{ field.type }}" class="form-control" name="{{ field.name }}" id="{{ field.name }}" step="{{ field.step }}" value="{{ field.value }}" required>
-                                {% endif %}
+                                {% endfor %}
                             </div>
-                        {% endfor %}
+                            <div class="d-grid mt-4">
+                                <button type="submit" class="btn btn-primary btn-lg">Run prediction</button>
+                            </div>
+                        </form>
                     </div>
-                    
-                    <div class="text-center mt-5">
-                        <button type="submit" class="btn btn-primary shadow-sm">
-                            Run Prediction
-                        </button>
+                </div>
+            </div>
+
+            <!-- Right: results + KM figure -->
+            <div class="col-lg-7 d-flex flex-column gap-3">
+                <div class="card panel-card flex-grow-1">
+                    <div class="panel-header" style="background: linear-gradient(135deg, #495057 0%, #343a40 100%);">Prediction &amp; survival estimates</div>
+                    <div class="card-body">
+                        {% if result %}
+                            {% if result.error %}
+                                <div class="alert alert-warning">{{ result.error }}</div>
+                            {% else %}
+                                {% if result.risk_band == 'high' %}
+                                    <div class="high-risk-badge">{{ result.risk_group|default:"High Risk" }}</div>
+                                {% elif result.risk_band == 'intermediate' %}
+                                    <div class="high-risk-badge" style="color: #fd7e14;">{{ result.risk_group|default:"Intermediate Risk" }}</div>
+                                {% elif result.risk_band == 'low' %}
+                                    <div class="high-risk-badge" style="color: #28a745;">{{ result.risk_group|default:"Low Risk" }}</div>
+                                {% else %}
+                                    <div class="high-risk-badge" style="color: #6c757d;">Risk group unavailable</div>
+                                {% endif %}
+
+                                <p class="text-muted small mb-2">Linear predictor (lp): <strong>{% firstof result.lp result.risk_score "—" %}</strong></p>
+
+                                {% if result.percentile %}
+                                <div class="risk-bar-container">
+                                    <div class="risk-label" style="left: {{ result.percentile }}%;">lp</div>
+                                    <div class="risk-bar">
+                                        <div class="risk-marker" style="left: {{ result.percentile }}%;"></div>
+                                    </div>
+                                    <div class="scale-markers">
+                                        <span>Low</span>
+                                        <span></span>
+                                        <span></span>
+                                        <span></span>
+                                        <span>High</span>
+                                    </div>
+                                    <div class="text-center mt-1 text-muted small">Marker position from validation cohort lp range (see cutoffs JSON).</div>
+                                </div>
+                                {% endif %}
+
+                                <table class="table table-bordered table-sm text-center survival-table mt-3">
+                                    <thead>
+                                        <tr>
+                                            <th>Time period</th>
+                                            <th>Survival Rate</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>1 year</td>
+                                            <td><strong>{{ result.survival_1yr|default:"--" }}%</strong></td>
+                                        </tr>
+                                        <tr class="table-light">
+                                            <td>2 years</td>
+                                            <td><strong>{{ result.survival_2yr|default:"--" }}%</strong></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                <p class="text-muted small fst-italic mb-0">Estimates are illustrative (risk score vs fixed baseline), not validated individual survival.</p>
+
+                                <details class="mt-3">
+                                    <summary class="small text-secondary" style="cursor:pointer;">Technical details</summary>
+                                    <div class="bg-light border rounded p-2 mt-2 small font-monospace">
+                                        {% for key, value in result.items %}
+                                            <div><strong>{{ key }}:</strong> {{ value }}</div>
+                                        {% endfor %}
+                                    </div>
+                                </details>
+                            {% endif %}
+                        {% else %}
+                            <div class="placeholder-hint">
+                                Adjust parameters on the left and click <strong>Run prediction</strong> to see risk group and estimated survival here.
+                            </div>
+                        {% endif %}
                     </div>
-                </form>
+                </div>
+
+                <div class="card panel-card">
+                    <div class="card-body">
+                        <h2 class="km-section-title mb-3">Overall survival Rate</h2>
+                        <div class="km-wrap">
+                            <img src="{% static 'predictor/img/KM_Curve_DeepLearning.png' %}"
+                                 alt="Kaplan-Meier overall survival curves by deep learning risk group">
+                        </div>
+                        <p class="text-muted small mt-2 mb-0">Reference: cohort-level Kaplan–Meier by risk group (test set).</p>
+                    </div>
+                </div>
             </div>
         </div>
-        
-        <footer class="text-center mt-4 text-muted small">
-            &copy; 2026 Medical AI Prediction System
-        </footer>
-    </div>
 
-    <!-- Bootstrap JS Bundle -->
+        <footer class="text-center mt-4 text-muted small">&copy; 2026 Medical AI Prediction System</footer>
+    </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
