@@ -27,9 +27,12 @@
             font-weight: 600;
             text-align: center;
         }
-        .left-scroll {
-            max-height: calc(100vh - 8rem);
-            overflow-y: auto;
+        /* 左侧不用内部滚动条；卡片固定最小高度，内容超出时由整页滚动 */
+        .left-column-card {
+            min-height: calc(100vh - 7rem);
+        }
+        .left-column-card .card-body {
+            overflow: visible;
         }
         .form-label {
             font-weight: 500;
@@ -121,9 +124,9 @@
         <div class="row g-4 align-items-stretch">
             <!-- Left: parameters -->
             <div class="col-lg-5">
-                <div class="card panel-card h-100">
+                <div class="card panel-card h-100 left-column-card">
                     <div class="panel-header">Patient characteristics</div>
-                    <div class="card-body left-scroll">
+                    <div class="card-body">
                         {% if error %}
                             <div class="alert alert-danger" role="alert">{{ error }}</div>
                         {% endif %}
@@ -239,10 +242,9 @@
                     <div class="card-body">
                         <h2 class="km-section-title mb-3">Overall survival Rate</h2>
                         <div class="km-wrap">
-                            <img src="{% static 'predictor/img/KM_Curve_DeepLearning.png' %}"
+                            <img src="{% static 'predictor/img/KM_Curve_DeepLearning.jpeg' %}"
                                  alt="Kaplan-Meier overall survival curves by deep learning risk group">
                         </div>
-                        <p class="text-muted small mt-2 mb-0">Reference: cohort-level Kaplan–Meier by risk group (test set).</p>
                     </div>
                 </div>
             </div>
